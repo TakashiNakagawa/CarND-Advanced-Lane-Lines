@@ -164,10 +164,12 @@ class Window():
                 self.lane_inds.append(good_inds)
                 self.current_base_x = np.int(mean)
 
+def fit(ploty, x, ym_per_pix=30/720, xm_per_pix=3.7/700):
+    return np.polyfit(ploty*ym_per_pix, x*xm_per_pix, 2)
 
-def detect_line(binary_warped):
+
+def line_points(binary_warped):
     histogram = np.sum(binary_warped[binary_warped.shape[0] // 2:, :], axis=0)
-    out_img = np.dstack((histogram, histogram, histogram)).astype(np.ubyte) * 255
 
     # Find the peak of the left and right halves of the histogram
     # These will be the starting point for the left and right lines
@@ -178,20 +180,12 @@ def detect_line(binary_warped):
 
     # Choose the number of sliding windows
     nwindows = 9
-    # Set height of windows
-    window_height = np.int(binary_warped.shape[0] / nwindows)  # 高さ方向に9分割
+
     # Identify the x and y positions of all nonzero pixels in the image
     nonzero = binary_warped.nonzero()  # np.transpose(nonzero)でインデックスの組み合わせを得る事が出来る
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
-    # Current positions to be updated for each window
-    leftx_current = leftx_base
-    rightx_current = rightx_base
-    # Set the width of the windows +/- margin
-    # margin = 100
-    margin = 50
-    # Set minimum number of pixels found to recenter window
-    minpix = 50
+
     # Create empty lists to receive left and right lane pixel indices
 
     left_window = Window(binary_warped.shape, leftx_base, nonzeroy, nonzerox)
@@ -202,25 +196,84 @@ def detect_line(binary_warped):
         left_window.update(window)
         right_window.update(window)
 
-
     # Concatenate the arrays of indices
     left_lane_inds = np.concatenate(left_window.lane_inds)
     right_lane_inds = np.concatenate(right_window.lane_inds)
 
     # Extract left and right line pixel positions
-    leftx = nonzerox[left_lane_inds]
-    lefty = nonzeroy[left_lane_inds]
-    rightx = nonzerox[right_lane_inds]
-    righty = nonzeroy[right_lane_inds]
+    leftx, lefty = nonzerox[left_lane_inds], nonzeroy[left_lane_inds]
+    rightx, righty = nonzerox[right_lane_inds], nonzeroy[right_lane_inds]
+
     # Fit a second order polynomial to each
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)
+    #return fit(lefty, leftx, 1, 1), fit(righty, rightx, 1, 1)
+    # return np.polyfit(lefty, leftx, 2), np.polyfit(righty, rightx, 2)
+    return (lefty, leftx), (righty, rightx)
+
+def fit_x(coef, y):
+    return coef[0]*y**2 + coef[1]*y + coef[2]
 
 
-img_test5 = mpimg.imread("./test_images/test5.jpg")
+def lane_region(shape, left_fit, right_fit):
+    ploty = np.linspace(0, shape[0] - 1, shape[0])
+    left_fitx = fit_x(left_fit, ploty)
+    right_fitx = fit_x(right_fit, ploty)
+
+    color_warp = np.zeros(shape).astype(np.uint8)
+    # color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+
+    pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+    pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+    pts = np.hstack((pts_left, pts_right))
+
+    cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
+    return color_warp
+
+class LineInfo():
+    def __init__(self, shape):
+        self.ploty = np.linspace(0, shape[0] - 1, shape[0])
+
+    def curvature(self, coef, ym_per_pix=30/720):
+        y_eval = np.max(self.ploty)
+        return ((1 + (2 * coef[0] * y_eval * ym_per_pix + coef[1]) ** 2) ** 1.5) / np.absolute(2 * coef[0])
+
+    @staticmethod
+    def add_curvature(image, curv_str):
+        cv2.putText(image, curv_str, (50,200), cv2.FONT_HERSHEY_PLAIN, 10, (0,255,255), 3)
+
+
 pipeline = Pipeline()
-img = pipeline.execute(img_test5)
+warp_image = WarpImage()
 
-detect_line(img)
-plt.imshow(img, cmap='gray')
-plt.show()
+def process_image(image):
+    img = pipeline.execute(image)
+    left, right = line_points(img)
+    left_fit = fit(left[0], left[1], 1, 1)
+    right_fit = fit(right[0], right[1], 1, 1)
+    color_warp = lane_region(image.shape, left_fit, right_fit)
+    color_warp = warp_image.restore(color_warp)
+    line_info = LineInfo(image.shape)
+    curv = line_info.curvature(left[1])
+    print("curv", curv)
+    line_info.add_curvature(image, str(curv))
+    result = cv2.addWeighted(image, 1, color_warp, 0.3, 0)
+    return result
+
+
+def one_image():
+    img_test5 = mpimg.imread("./test_images/test5.jpg")
+    result = process_image(img_test5)
+    plt.imshow(result)
+    plt.show()
+
+def video():
+    from moviepy.editor import VideoFileClip
+    white_output = 'project_video_output.mp4'
+    clip1 = VideoFileClip('project_video.mp4')
+    white_clip = clip1.fl_image(process_image).subclip(0,5)
+    white_clip.write_videofile(white_output, audio=False)
+
+
+
+if __name__ == '__main__':
+    # video()
+    one_image()
