@@ -145,18 +145,44 @@ class Line():
     def __init__(self, shape, line_type):
         self.line_type = line_type
         self.shape = shape
-        self.current_x = []
-        self.current_y = []
+        self.radius_of_curvature = None
+        self.best_fit = None
+        self.prev_fit = []
+        self.radius_of_curvature_prev = None
+        self.best_fit_prev = None
 
-    def fit_in_pixel(self):
-        return np.polyfit(self.current_y, self.current_x, 2)
 
-    def fit_in_meter(self):
-        return np.polyfit(self.current_y * Line.ym_per_pix, self.current_x * Line.xm_per_pix, 2)
+    def detect(self, allx, ally):
+        self.save()
+        # 過去の履歴に足す
+        if len(self.prev_fit) > 10:
+            self.prev_fit.pop(0)
+        self.prev_fit.append(self.__fit_in_pixel(ally, allx))
+        self.best_fit = self.average_fit()
+        curvature = self.__curvature_in_meter(ally, allx)
+        if self.sanity_check(curvature):
+            self.radius_of_curvature = curvature
+        else:
+            self.restore()
+            # self.prev_fit.pop()
+            # self.restore()
+            # self.best_fit = self.average_fit()
+            # self.radius_of_curvature = self.__curvature_in_meter(ally, allx)
 
     def get_x_in_pixel(self, y_in_pixel):
-        coef = self.fit_in_pixel()
+        coef = self.best_fit
         return coef[0]*y_in_pixel**2 + coef[1]*y_in_pixel + coef[2]
+
+    def average_fit(self):
+        a = 0
+        b = 0
+        c = 0
+        for coef in self.prev_fit:
+            a += coef[0]
+            b += coef[1]
+            c += coef[2]
+        length = len(self.prev_fit)
+        return [a/length, b/length, c/length]
 
     def line_position_in_pixel(self):
         ploty = np.linspace(0, self.shape[0] - 1, self.shape[0])
@@ -166,10 +192,37 @@ class Line():
         else:
             return np.array([np.flipud(np.transpose(np.vstack([x, ploty])))])
 
-    def curvature_in_meter(self):
+    def __curvature_in_meter(self, ally, allx):
         y_eval = (self.shape[0] - 1)*Line.ym_per_pix
-        coef = self.fit_in_meter()
+        coef = self.__fit_in_meter(ally, allx)
         return ((1 + (2 * coef[0] * y_eval + coef[1]) ** 2) ** 1.5) / np.absolute(2 * coef[0])
+
+    @staticmethod
+    def __fit_in_pixel(ally, allx):
+        return np.polyfit(ally, allx, 2)
+
+    @staticmethod
+    def __fit_in_meter(ally, allx):
+        return np.polyfit(ally * Line.ym_per_pix, allx * Line.xm_per_pix, 2)
+
+    def sanity_check(self, curvature):
+        if self.radius_of_curvature is None:
+            return True
+        if np.fabs(curvature - self.radius_of_curvature) < 1000 and (curvature < 5000):
+            return True
+        else:
+            return False
+
+    def save(self):
+        self.radius_of_curvature_prev = self.radius_of_curvature
+        self.best_fit_prev = self.best_fit
+
+    def restore(self):
+        self.prev_fit.pop()
+        if self.radius_of_curvature_prev is not None:
+            self.radius_of_curvature = self.radius_of_curvature_prev
+        if self.best_fit_prev is not None:
+            self.best_fit = self.best_fit_prev
 
 class Window():
     def __init__(self, shape, base_x, nonzeroy, nonzerox):
@@ -202,11 +255,6 @@ class Window():
                 self.lane_inds.append(good_inds)
                 self.current_base_x = np.int(mean)
 
-# def fit_x(coef, y):
-#     return coef[0]*y**2 + coef[1]*y + coef[2]
-#
-# def fit(ploty, x, ym_per_pix=30/720, xm_per_pix=3.7/700):
-#     return np.polyfit(ploty*ym_per_pix, x*xm_per_pix, 2)
 
 class LineManager():
     def __init__(self, shape):
@@ -214,34 +262,48 @@ class LineManager():
         self.left_line = Line(shape, LineType.left)
         self.right_line = Line(shape, LineType.right)
 
-    def execute(self, binary_warped):
-        histogram = np.sum(binary_warped[binary_warped.shape[0] // 2:, :], axis=0)
-        midpoint = np.int(histogram.shape[0] / 2)
-
-        leftx_base = np.argmax(histogram[:midpoint])  # 左側ピーク
-        rightx_base = np.argmax(histogram[midpoint:]) + midpoint  # 右側ピーク
-
+    def update(self, binary_warped):
         # Identify the x and y positions of all nonzero pixels in the image
         nonzero = binary_warped.nonzero()  # np.transpose(nonzero)でインデックスの組み合わせを得る事が出来る
         nonzeroy = np.array(nonzero[0])
         nonzerox = np.array(nonzero[1])
+        histogram = np.sum(binary_warped[binary_warped.shape[0] // 2:, :], axis=0)
+        midpoint = np.int(histogram.shape[0] / 2)
+        leftx_base = np.argmax(histogram[:midpoint])  # 左側ピーク
+        rightx_base = np.argmax(histogram[midpoint:]) + midpoint  # 右側ピーク
 
-        left_window = Window(binary_warped.shape, leftx_base, nonzeroy, nonzerox)
-        right_window = Window(binary_warped.shape, rightx_base, nonzeroy, nonzerox)
+        if self.left_line.best_fit:
+            left_lane_inds = self.find_line_simple(self.left_line, nonzeroy, nonzerox)
+        else:
+            left_lane_inds = self.find_line_detail(nonzeroy, nonzerox, leftx_base)
 
-        nwindows = 9
-        for window in range(nwindows):
-            left_window.update(window)
-            right_window.update(window)
+        if self.right_line.best_fit:
+            right_lane_inds = self.find_line_simple(self.right_line, nonzeroy, nonzerox)
+        else:
+            right_lane_inds = self.find_line_detail(nonzeroy, nonzerox, rightx_base)
 
+        self.left_line.detect(nonzerox[left_lane_inds], nonzeroy[left_lane_inds])
+        self.right_line.detect(nonzerox[right_lane_inds], nonzeroy[right_lane_inds])
+
+        if not self.sanity_check():
+            self.left_line.restore()
+            self.right_line.restore()
+
+
+    def find_line_detail(self, nonzeroy, nonzerox, base_x):
+        window = Window(self.shape, base_x, nonzeroy, nonzerox)
+        for index in range(9):
+            window.update(index)
         # Concatenate the arrays of indices
-        left_lane_inds = np.concatenate(left_window.lane_inds)
-        right_lane_inds = np.concatenate(right_window.lane_inds)
+        lane_inds = np.concatenate(window.lane_inds)
+        return lane_inds
 
-        self.left_line.current_x = nonzerox[left_lane_inds]
-        self.left_line.current_y = nonzeroy[left_lane_inds]
-        self.right_line.current_x = nonzerox[right_lane_inds]
-        self.right_line.current_y = nonzeroy[right_lane_inds]
+    def find_line_simple(self, line, nonzeroy, nonzerox):
+        margin = 50
+        prev_fit = line.best_fit
+        lane_inds = ((nonzerox > (prev_fit[0] * (nonzeroy ** 2) + prev_fit[1] * nonzeroy + prev_fit[2] - margin)) &
+                    (nonzerox < (prev_fit[0] * (nonzeroy ** 2) + prev_fit[1] * nonzeroy + prev_fit[2] + margin)))
+        return lane_inds
 
 
     def lane_region(self):
@@ -255,24 +317,37 @@ class LineManager():
         return color_warp
 
     def curvature(self):
-        left = self.left_line.curvature_in_meter()
-        right = self.right_line.curvature_in_meter()
+        left = self.left_line.radius_of_curvature
+        right = self.right_line.radius_of_curvature
         return (left + right)/2
 
     def center_offset(self):
         camera_x = self.shape[1]/2
         left = self.left_line.get_x_in_pixel(self.shape[0]-1)
         right = self.right_line.get_x_in_pixel(self.shape[0] - 1)
-        return ((left + right)/2 - camera_x)*Line.xm_per_pix
+        # print("camerax, left, right", camera_x, left, right)
+        return (camera_x- (left + right)/2)*Line.xm_per_pix
+
+    def sanity_check(self):
+        ploty = np.linspace(0, self.shape[0] - 1, self.shape[0])
+        left_x = np.array(self.left_line.get_x_in_pixel(ploty))
+        right_x = np.array(self.right_line.get_x_in_pixel(ploty))
+        diff = left_x - right_x
+        if diff.max() - diff.min() > 80:
+            print("diff", diff.max() - diff.min())
+            return False
+        else:
+            return True
 
 
 pipeline = Pipeline()
 warp_image = WarpImage()
+image_shape = (720, 1280, 3)
+line_manager = LineManager(image_shape)
 
 def process_image(image):
     img = pipeline.execute(image)
-    line_manager = LineManager(image.shape)
-    line_manager.execute(img)
+    line_manager.update(img)
 
     color_warp = line_manager.lane_region()
     color_image = warp_image.restore(color_warp)
@@ -294,7 +369,8 @@ def video():
     from moviepy.editor import VideoFileClip
     white_output = 'project_video_output.mp4'
     clip1 = VideoFileClip('project_video.mp4')
-    white_clip = clip1.fl_image(process_image).subclip(0,5)
+    # white_clip = clip1.fl_image(process_image).subclip(49,50)
+    white_clip = clip1.fl_image(process_image)
     white_clip.write_videofile(white_output, audio=False)
 
 
