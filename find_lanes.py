@@ -108,32 +108,7 @@ class Pipeline():
         return image
 
 
-# class Line():
-#     def __init__(self):
-#         # was the line detected in the last iteration?
-#         self.detected = False
-#         # x values of the last n fits of the line
-#         self.recent_xfitted = []
-#         # average x values of the fitted line over the last n iterations
-#         self.bestx = None
-#         # polynomial coefficients averaged over the last n iterations
-#         self.best_fit = None
-#         # polynomial coefficients for the most recent fit
-#         self.current_fit = [np.array([False])]
-#         # radius of curvature of the line in some units
-#         self.radius_of_curvature = None
-#         # distance in meters of vehicle center from the line
-#         self.line_base_pos = None
-#         # difference in fit coefficients between last and new fits
-#         self.diffs = np.array([0, 0, 0], dtype='float')
-#         # x values for detected line pixels
-#         self.allx = None
-#         # y values for detected line pixels
-#         self.ally = None
-
-
 from enum import Enum
-
 class LineType(Enum):
     left = 1
     right = 2
@@ -164,10 +139,6 @@ class Line():
             self.radius_of_curvature = curvature
         else:
             self.restore()
-            # self.prev_fit.pop()
-            # self.restore()
-            # self.best_fit = self.average_fit()
-            # self.radius_of_curvature = self.__curvature_in_meter(ally, allx)
 
     def get_x_in_pixel(self, y_in_pixel):
         coef = self.best_fit
@@ -325,7 +296,6 @@ class LineManager():
         camera_x = self.shape[1]/2
         left = self.left_line.get_x_in_pixel(self.shape[0]-1)
         right = self.right_line.get_x_in_pixel(self.shape[0] - 1)
-        # print("camerax, left, right", camera_x, left, right)
         return (camera_x- (left + right)/2)*Line.xm_per_pix
 
     def sanity_check(self):
@@ -353,8 +323,11 @@ def process_image(image):
     color_image = warp_image.restore(color_warp)
     curvature = line_manager.curvature()
     center_offset = line_manager.center_offset()
-    cv2.putText(image, "curvature: {0:.2f}[m]".format(curvature), (50, 80), cv2.FONT_HERSHEY_PLAIN, 5, (0, 255, 255), 3)
-    cv2.putText(image, "center offset: {0:.2f}[m]".format(center_offset), (50, 150), cv2.FONT_HERSHEY_PLAIN, 5, (0, 255, 255), 3)
+    cv2.putText(image, "curvature: {0:.0f}[m]".format(curvature), (50, 80), cv2.FONT_HERSHEY_PLAIN, 4, (0, 255, 255), 3)
+    if center_offset >= 0:
+        cv2.putText(image, "Vehicle is {0:.2f}[m] right of center".format(center_offset), (50, 150), cv2.FONT_HERSHEY_PLAIN, 4, (0, 255, 255), 3)
+    else:
+        cv2.putText(image, "Vehicle is {0:.2f}[m] left of center".format(center_offset), (50, 150), cv2.FONT_HERSHEY_PLAIN, 4, (0, 255, 255), 3)
     result = cv2.addWeighted(image, 1, color_image, 0.3, 0)
     return result
 
