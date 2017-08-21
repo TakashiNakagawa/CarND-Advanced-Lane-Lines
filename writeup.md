@@ -56,10 +56,12 @@ I then used the output `objpoints` and `imgpoints` to compute the camera calibra
 To demonstrate this step, I will describe how I apply the distortion correction to one of the test images like this one:
 ![alt text][image2]
 
+I used cv2.calibrateCamera parameter obtained by chessboard board then applied it to the test image.  
+
 #### 2. Describe how (and identify where in your code) you used color transforms, gradients or other methods to create a thresholded binary image.  Provide an example of a binary image result.
 
 I used a combination of color and gradient thresholds to generate a binary image (thresholding steps at 6th code cell ("color and gradient stack" section) in ./find_lanes.ipynb).  Here's an example of my output for this step. Green is a gradient threshold and blue is a color threshold.  
-I decided parameter by using ipywidgets.  
+I decided parameter by try and error using ipywidgets.  
 
 ![alt text][image3_1]
 
@@ -68,7 +70,7 @@ Here's combined image of color and gradient thresholds.
 
 #### 3. Describe how (and identify where in your code) you performed a perspective transform and provide an example of a transformed image.
 
-The code for my perspective transform appears in 6th code cell ("perspective transform and provide an example of a transformed image" section) in ./find_lanes.ipynb.  
+The code for my perspective transform appears in 7th code cell ("perspective transform and provide an example of a transformed image" section) in ./find_lanes.ipynb.  
 I chose the hardcode the source and destination points by checking test_images/straight_lines1.jpg so that 4 src points were on the line.  
 
 
@@ -94,12 +96,12 @@ I did this in lines 261 through 285 in my code in `find_lanes.py`
 
 1. create histogram
 2. find two peaks
-3. using window sliding around each peaks
-4. when fitted line of previous frame existed, just searched around this lines.
-5. collecting line candidate positions through #3 or #4, fitted 2nd order polynominal using `numpy.polyfit(ys, xs, 2)`.
+3. using window sliding around each peak
+4. when a fitted line of the previous frame existed, just searched around this lines.
+5. collecting line candidate positions through #3 or #4, fitted 2nd order polynomial using `numpy.polyfit(ys, xs, 2)`.
 
 
-#### 5. Describe how (and identify where in your code) you calculated the radius of curvature of the lane and the position of the vehicle with respect to center.
+#### 5. Describe how (and identify where in your code) you calculated the radius of curvature of the lane and the position of the vehicle with respect to the center.
 
 I did this in lines 315 through 324 in my code in `find_lanes.py`
 ###### curvature
@@ -111,7 +113,7 @@ I did this in lines 315 through 324 in my code in `find_lanes.py`
 ###### position of the vehicle
 - I used x positions at left, right and camera center.
 - Left and right x positions were calculated by fitting equation at y of bottom image.
-- Camera center x position was calculated by middle of image that was 640[pixel].
+- Camera center x position was calculated by the middle of the image that was 640[pixel].
 
 
 
@@ -148,11 +150,11 @@ those steps are important.
 I used only s channel of hsv color space. But LUV or LAB might be helpful under difficult light condition.  
 
 **gradient thresholded**  
-When line color and ground color are similar, gradient ditection might be difficult.  Before applying cv2.COLOR_RGB2GRAY, convert RGB to another color space, then to GRAY might be helpful.
+When line color and ground color are similar, gradient detection might be difficult.  Before applying cv2.COLOR_RGB2GRAY, convert RGB to another color space, then to GRAY might be helpful.
 
 **line detect**  
-When noisy line candidate points are collected, curve fitting might be fail. So I set window margin size to 50 pixel(smaller than tutorial code).
+When noisy line candidate points are collected, curve fitting might fail. So I set window margin size to 50 pixels(smaller than tutorial code).
 
 **recover**  
-I stocked previous 10 frames. In case line was lost, I used previous best fit parameter.  
+I stocked previous 10 frames. In case the line was lost, I used the previous best fit parameter.  
 I also average 10 frames parameter so that line curve to be stable.  
